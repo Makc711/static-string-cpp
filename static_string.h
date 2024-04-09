@@ -1,7 +1,16 @@
 /*
 Compile-time string manipulation library for modern C++
-version 1.0.1
+version 1.0.2
 https://github.com/snw1/static-string-cpp
+Added functionality by Maxim Rusanov <maxim.rusanof@gmail.com>
+Added:
+    c_strlen()
+    make<Char, Size>(const Char* str)
+    make<Char, Size, Indexes...>(const Char* str, ...)
+    string_to_static_string<Char, Size>(const Char* str)
+    STOSS(x)
+    to_c_string()
+    c_str()
 
 Licensed under the MIT License <http://opensource.org/licenses/MIT>.
 SPDX-License-Identifier: MIT
@@ -29,9 +38,10 @@ SOFTWARE.
 #ifndef SNW1_STATIC_STRING_H
 #define SNW1_STATIC_STRING_H
 
-#include <array>
 #include <string>
 #include <limits>
+
+#define USE_USER_LITERALS 0
 
 namespace snw1 {
 
@@ -39,10 +49,13 @@ namespace snw1 {
 #define ITOSW(x) int_to_static_string<(x), wchar_t>()
 #define UTOSS(x) uint_to_static_string<(x), char>()
 #define UTOSW(x) uint_to_static_string<(x), wchar_t>()
-#define SSTOI(x) static_string_to_int((x))
-#define SSTOU(x) static_string_to_uint((x))
+#define SSTOI(x) static_string_to_int((x))  // c_string or static_string to int
+#define SSTOU(x) static_string_to_uint((x)) // c_string or static_string to uint
+#define STOSS(x) string_to_static_string<char, c_strlen((x)) + 1>((x)) // c_string "str" or constexpr const char* to static_string
+#define STOSW(x) string_to_static_string<wchar_t, c_strlen((x)) + 1>((x)) // c_string "str" or constexpr const char* to static_string
 
-template<typename Char, size_t Size> struct basic_static_string;
+template<typename Char, size_t Size>
+struct basic_static_string;
 
 namespace __static_string_detail {
 
@@ -99,6 +112,16 @@ struct make_int_char_sequence<false, 0, Char, Chars ...> : char_sequence<Char, C
 
 template<typename Char>
 struct make_int_char_sequence<false, 0, Char> : char_sequence<Char, static_cast<Char>('0')> {};
+
+template<typename Char, size_t Size, size_t ... Indexes>
+constexpr basic_static_string<Char, Size> make(const Char* str, index_sequence<Indexes...>) {
+    return { { str[Indexes]... } };
+}
+
+template<typename Char, size_t Size>
+constexpr basic_static_string<Char, Size> make(const Char* str) {
+    return make<Char, Size>(str, make_index_sequence<Size>());
+}
 
 template<typename Char, size_t Size>
 constexpr basic_static_string<Char, Size> make(const basic_static_string<Char, Size>& str) {
@@ -219,7 +242,12 @@ constexpr unsigned long long to_uint(const basic_static_string<Char, Size>& str,
 
 template<typename Char, size_t Size>
 std::basic_string<Char> to_string(const basic_static_string<Char, Size>& str) {
-    return std::basic_string<Char>(str.data.data());
+    return std::basic_string<Char>(str.data);
+}
+
+template<typename Char, size_t Size>
+const Char* to_c_string(const basic_static_string<Char, Size>& str) {
+    return str.data;
 }
 
 template<typename Char>
@@ -246,137 +274,193 @@ constexpr basic_static_string<Char, Size> upper(const basic_static_string<Char, 
 
 } // namespace __static_string_detail
 
-template<typename Char, size_t Size> struct basic_static_string {
-    static constexpr size_t npos = std::numeric_limits<size_t>::max();
-    constexpr size_t length() const {
+template<typename Char, size_t Size>
+struct basic_static_string {
+    [[nodiscard]] constexpr size_t length() const {
         return Size - 1;
     }
-    constexpr size_t size() const {
+
+    [[nodiscard]] constexpr size_t size() const {
         return Size - 1;
     }
-    constexpr size_t begin() const {
+
+    [[nodiscard]] constexpr size_t begin() const {
         return 0;
     }
-    constexpr size_t end() const {
+
+    [[nodiscard]] constexpr size_t end() const {
         return Size - 1;
     }
-    constexpr size_t rbegin() const {
+
+    [[nodiscard]] constexpr size_t rbegin() const {
         return Size - 2;
     }
-    constexpr size_t rend() const {
-        return std::numeric_limits<size_t>::max();
+
+    [[nodiscard]] constexpr size_t rend() const {
+      return npos;
     }
-    constexpr bool empty() const {
+
+    [[nodiscard]] constexpr bool empty() const {
         return Size < 2;
     }
-    template<typename ... Args> static constexpr auto make(Args&& ... args) {
+
+    template<typename ... Args>
+    [[nodiscard]] static constexpr auto make(Args&& ... args) {
         return __static_string_detail::concat<Char>(std::forward<Args>(args) ...);
     }
-    constexpr auto reverse() const {
+
+    [[nodiscard]] constexpr auto reverse() const {
         return __static_string_detail::make(*this, __static_string_detail::make_reverse_index_sequence<Size - 1>{});
     }
-    template<size_t Begin, size_t End> constexpr auto substring() const {
+
+    template<size_t Begin, size_t End>
+    [[nodiscard]] constexpr auto substring() const {
         static_assert(Begin <= End, "Begin is greater than End (Begin > End)");
         static_assert(End <= Size - 1, "End is greater than string length (End > Size - 1)");
         return __static_string_detail::make(*this, __static_string_detail::make_index_subsequence<Begin, End>{});
     }
-    template<size_t End> constexpr auto prefix() const {
+
+    template<size_t End>
+    [[nodiscard]] constexpr auto prefix() const {
         return substring<0, End>();
     }
-    template<size_t Begin> constexpr auto suffix() const {
+
+    template<size_t Begin>
+    [[nodiscard]] constexpr auto suffix() const {
         return substring<Begin, Size - 1>();
     }
-    constexpr size_t find(Char ch, size_t from = 0, size_t nth = 0) const {
-        return Size < 2 || from >= Size - 1 ? npos :
+
+    [[nodiscard]] constexpr size_t find(Char ch, size_t from = 0, const size_t nth = 0) const {
+        return ((Size < 2) || (from >= Size - 1)) ? npos :
             data[from] != ch ? find(ch, from + 1, nth) :
             nth > 0 ? find(ch, from + 1, nth - 1) : from;
     }
-    template<size_t SubSize> constexpr size_t find(const basic_static_string<Char, SubSize>& substr, size_t from = 0, size_t nth = 0) const {
+
+    template<size_t SubSize>
+    [[nodiscard]] constexpr size_t find(const basic_static_string<Char, SubSize>& substr, size_t from = 0, size_t nth = 0) const {
         return Size < SubSize || from > Size - SubSize ? npos :
             __static_string_detail::compare(*this, from, substr, 0, 1, SubSize - 1) != 0 ? find(substr, from + 1, nth) :
             nth > 0 ? find(substr, from + 1, nth - 1) : from;
     }
-    template<size_t SubSize> constexpr size_t find(const Char (& substr)[SubSize], size_t from = 0, size_t nth = 0) const {
+
+    template<size_t SubSize>
+    [[nodiscard]] constexpr size_t find(const Char (& substr)[SubSize], const size_t from = 0, const size_t nth = 0) const {
         return find(__static_string_detail::make(substr), from, nth);
     }
-    constexpr size_t rfind(Char ch, size_t from = Size - 2, size_t nth = 0) const {
+
+    [[nodiscard]] constexpr size_t rfind(Char ch, size_t from = Size - 2, const size_t nth = 0) const {
         return Size < 2 || from > Size - 2 ? npos :
             data[from] != ch ? rfind(ch, from - 1, nth) :
             nth > 0 ? rfind(ch, from - 1, nth - 1) : from;
     }
-    template<size_t SubSize> constexpr size_t rfind(const basic_static_string<Char, SubSize>& substr, size_t from = Size - SubSize, size_t nth = 0) const {
+
+    template<size_t SubSize>
+    [[nodiscard]] constexpr size_t rfind(const basic_static_string<Char, SubSize>& substr, size_t from = Size - SubSize, size_t nth = 0) const {
         return Size < SubSize || from > Size - SubSize ? npos :
             __static_string_detail::compare(*this, from, substr, 0, 1, SubSize - 1) != 0 ? rfind(substr, from - 1, nth) :
             nth > 0 ? rfind(substr, from - 1, nth - 1) : from;
     }
-    template<size_t SubSize> constexpr size_t rfind(const Char (& substr)[SubSize], size_t from = Size - SubSize, size_t nth = 0) const {
+
+    template<size_t SubSize>
+    [[nodiscard]] constexpr size_t rfind(const Char (& substr)[SubSize], const size_t from = Size - SubSize, const size_t nth = 0) const {
         return rfind(__static_string_detail::make(substr), from, nth);
     }
-    constexpr bool contains(Char ch) const {
+
+    [[nodiscard]] constexpr bool contains(Char ch) const {
         return find(ch) != npos;
     }
-    template<size_t SubSize> constexpr bool contains(const basic_static_string<Char, SubSize>& substr) const {
+
+    template<size_t SubSize>
+    [[nodiscard]] constexpr bool contains(const basic_static_string<Char, SubSize>& substr) const {
         return find(substr) != npos;
     }
-    template<size_t SubSize> constexpr bool contains(const Char (& substr)[SubSize]) const {
+
+    template<size_t SubSize>
+    [[nodiscard]] constexpr bool contains(const Char (& substr)[SubSize]) const {
         return find(substr) != npos;
     }
-    template<size_t SubSize> constexpr bool starts_with(const basic_static_string<Char, SubSize>& prefix) const {
+
+    template<size_t SubSize>
+    [[nodiscard]] constexpr bool starts_with(const basic_static_string<Char, SubSize>& prefix) const {
         return SubSize > Size ? false : __static_string_detail::compare(*this, 0, prefix, 0, 1, SubSize - 1) == 0;
     }
-    template<size_t SubSize> constexpr bool starts_with(const Char (& prefix)[SubSize]) const {
+
+    template<size_t SubSize>
+    [[nodiscard]] constexpr bool starts_with(const Char (& prefix)[SubSize]) const {
         return starts_with(__static_string_detail::make(prefix));
     }
-    template<size_t SubSize> constexpr bool ends_with(const basic_static_string<Char, SubSize>& suffix) const {
+
+    template<size_t SubSize>
+    [[nodiscard]] constexpr bool ends_with(const basic_static_string<Char, SubSize>& suffix) const {
         return SubSize > Size ? false : __static_string_detail::compare(*this, Size - SubSize, suffix, 0, 1, SubSize - 1) == 0;
     }
-    template<size_t SubSize> constexpr bool ends_with(const Char (& suffix)[SubSize]) const {
+
+    template<size_t SubSize>
+    [[nodiscard]] constexpr bool ends_with(const Char (& suffix)[SubSize]) const {
         return ends_with(__static_string_detail::make(suffix));
     }
-    constexpr size_t count(Char ch) const {
+
+    [[nodiscard]] constexpr size_t count(Char ch) const {
         return __static_string_detail::count(*this, ch, 0);
     }
-    template<size_t Index> constexpr auto split() const {
+
+    template<size_t Index>
+    [[nodiscard]] constexpr auto split() const {
         return std::make_pair(prefix<Index>(), suffix<Index + 1>());
     }
-    constexpr unsigned long long hash() const {
+
+    [[nodiscard]] constexpr unsigned long long hash() const {
         return __static_string_detail::hash(*this, 0);
     }
-    constexpr Char operator[](size_t index) const {
+
+    [[nodiscard]] constexpr Char operator[](size_t index) const {
         return data[index];
     }
-    constexpr long long to_int() const {
+
+    [[nodiscard]] constexpr long long to_int() const {
         return __static_string_detail::to_int(*this);
     }
-    constexpr unsigned long long to_uint() const {
+
+    [[nodiscard]] constexpr unsigned long long to_uint() const {
         return __static_string_detail::to_uint(*this, 0);
     }
-    std::string str() const {
+
+    [[nodiscard]] std::string str() const {
         return __static_string_detail::to_string(*this);
     }
-    constexpr auto lower() const {
+
+    [[nodiscard]] const Char* c_str() const {
+        return __static_string_detail::to_c_string(*this);
+    }
+
+    [[nodiscard]] constexpr auto lower() const {
         return __static_string_detail::lower(*this, __static_string_detail::make_index_sequence<Size>{});
     }
-    constexpr auto upper() const {
+
+    [[nodiscard]] constexpr auto upper() const {
         return __static_string_detail::upper(*this, __static_string_detail::make_index_sequence<Size>{});
     }
-    std::array<const Char, Size> data;
+    
+    const Char data[Size];
+    static constexpr size_t npos = (std::numeric_limits<size_t>::max)();
 };
 
 template<size_t Size> using static_string_t = basic_static_string<char, Size>;
 template<size_t Size> using static_wstring_t = basic_static_string<wchar_t, Size>;
 
-using static_string = basic_static_string<char, 0>;
-using static_wstring = basic_static_string<wchar_t, 0>;
+using static_string = basic_static_string<char, 1>;
+using static_wstring = basic_static_string<wchar_t, 1>;
 
+#if USE_USER_LITERALS
 template<typename Char, Char ... Chars>
-constexpr basic_static_string<Char, sizeof ... (Chars) + 1> operator"" _ss() {
+constexpr basic_static_string<Char, sizeof ... (Chars) + 1> operator""_ss() {
     return {Chars ..., static_cast<Char>('\0')};
 };
+#endif
 
 template<typename Char, size_t Size>
 std::basic_ostream<Char>& operator<<(std::basic_ostream<Char>& bos, const basic_static_string<Char, Size>& str) {
-    bos << str.data.data();
+    bos << str.data;
     return bos;
 }
 
@@ -513,6 +597,20 @@ constexpr unsigned long long static_string_to_uint(const basic_static_string<Cha
 template<typename Char, size_t Size>
 constexpr unsigned long long static_string_to_uint(const Char (& str)[Size]) {
     return static_string_to_uint(__static_string_detail::make(str));
+}
+
+template<typename Char, size_t Size>
+constexpr basic_static_string<Char, Size> string_to_static_string(const Char* str) {
+    return __static_string_detail::make<Char, Size>(str);
+}
+
+template<typename Char>
+constexpr size_t c_strlen(const Char* str) {
+    size_t length = 0;
+    while (str[length] != '\0') {
+        ++length;
+    }
+    return length;
 }
 
 } // namespace snw1
